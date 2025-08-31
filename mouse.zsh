@@ -3,21 +3,6 @@ set-status() { return $1; }
 handle_mouse_event0() {
   local bt=$1 mx=$2 my=$3 last_status=$4
 
-  case $bt in
-    3)
-      return 0;; # Process on press, discard release
-      # mlterm sends 3 on mouse-wheel-up but also on every button
-      # release, so it's unusable
-    64)
-      # eterm, rxvt, gnome/KDE terminal mouse wheel
-      zle up-line-or-history
-      return;;
-    4|65)
-      # mlterm or eterm, rxvt, gnome/KDE terminal mouse wheel
-      zle down-line-or-history
-      return;;
-  esac
-
   setopt extendedglob
 
   print -n '\e[6n' # query cursor position
@@ -32,6 +17,7 @@ handle_mouse_event0() {
   # note that we may also get a mouse tracking btn-release event,
   # which would then be discarded.
 
+  # Match ANSI cursor position report (ESC [row;colR)
   [[ $buf = (#b)*\[([0-9]##)\;[0-9]##R ]] || return
   local cy=$match[1]
 
@@ -54,7 +40,9 @@ handle_mouse_event0() {
   # if promptsubst, then we need first to do the expansions (to
   # be able to remove the visual effects) and disable further
   # expansions
-  [[ -o promptsubst ]] && cur_prompt=${${(e)cur_prompt}//(#b)([\\\$\`])/\\$match}
+  if [[ -o promptsubst ]]; then
+    cur_prompt=${${(e)cur_prompt}//(#b)([\\\$\`])/\\$match}
+  fi
 
   # restore the exit status in case $PS<n> relies on it
   set-status $last_status
@@ -145,7 +133,9 @@ handle_mouse_event() {
 
   read -k mx
   read -k my
-  if [[ $mx = $'\030' ]]; then
+
+  # Check if $mx is the ASCII character with code 24 (Ctrl-X)
+  if [[ "$mx" == "\x18" ]]; then
     # assume event is \E[M<btn>dired-button()(^X\EG<x><y>)
     read -k mx
     read -k mx
@@ -158,12 +148,20 @@ handle_mouse_event() {
     (( mx = #mx - 32 ))
   fi
 
+  if [[ $bt -eq 3 ]]; then
+    return  # Process on press, discard release
+  elif [[ $bt -eq 64 || $bt -eq 65 ]]; then
+    # Mouse wheel up/down: fallback to terminal scroll
+    # disable mouse reporting. Will be re-enabled in precmd
+    print -n '\e[?1000l'
+    return
+  fi
+
   handle_mouse_event0 $bt $mx $my $last_status
 }
 
 zle -N handle_mouse_event
 
-# xterm-like mouse support
 zmodload -i zsh/parameter # needed for $functions
 functions[precmd]+='print -n '\''\e[?1000h'\'
 functions[preexec]+='print -n '\''\e[?1000l'\'
